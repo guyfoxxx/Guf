@@ -1,0 +1,286 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ============ AUTH / USERS ============
+
+enum Role {
+  SUPER_ADMIN
+  ADMIN
+  OPERATOR
+  TECHNICIAN
+}
+
+model User {
+  id            String    @id @default(cuid())
+  name          String
+  phone         String    @unique
+  email         String?   @unique
+  passwordHash  String
+  role          Role      @default(OPERATOR)
+  isActive      Boolean   @default(true)
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+  employee      Employee?
+  auditLogs     AuditLog[]
+}
+
+// ============ CUSTOMERS ============
+
+enum BuildingType {
+  APARTMENT
+  VILLA
+  COMMERCIAL
+  INDUSTRIAL
+  OTHER
+}
+
+model Customer {
+  id           String   @id @default(cuid())
+  name         String
+  phone        String   @unique
+  secondPhone  String?
+  address      String
+  areaId       String?
+  area         Area?    @relation(fields: [areaId], references: [id])
+  buildingType BuildingType @default(APARTMENT)
+  notes        String?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  requests     ServiceRequest[]
+  invoices     Invoice[]
+}
+
+// ============ SERVICES ============
+
+model Service {
+  id          String   @id @default(cuid())
+  slug        String   @unique
+  title       String
+  shortDesc   String
+  fullDesc    String
+  priceMin    Int
+  priceMax    Int
+  advantages  String[]
+  process     Json // ordered steps [{title, description}]
+  faq         Json // [{question, answer}]
+  seoTitle    String?
+  seoDesc     String?
+  coverImage  String?
+  gallery     String[]
+  isActive    Boolean  @default(true)
+  order       Int      @default(0)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  requests    ServiceRequest[]
+  invoiceItems InvoiceItem[]
+}
+
+// ============ SERVICE AREAS (SEO city pages) ============
+
+model Area {
+  id          String   @id @default(cuid())
+  slug        String   @unique
+  name        String
+  province    String
+  seoTitle    String?
+  seoDesc     String?
+  body        String?
+  isActive    Boolean  @default(true)
+  customers   Customer[]
+  requests    ServiceRequest[]
+  employees   Employee[]
+}
+
+// ============ SERVICE REQUESTS ============
+
+enum Urgency {
+  NORMAL
+  URGENT
+  EMERGENCY
+}
+
+enum RequestStatus {
+  NEW
+  CONTACTED
+  ASSIGNED
+  WORKING
+  COMPLETED
+  CANCELLED
+}
+
+model ServiceRequest {
+  id               String        @id @default(cuid())
+  code             String        @unique // human friendly tracking code
+  customerId       String?
+  customer         Customer?     @relation(fields: [customerId], references: [id])
+  name             String
+  phone            String
+  address          String
+  areaId           String?
+  area             Area?         @relation(fields: [areaId], references: [id])
+  serviceId        String?
+  service          Service?      @relation(fields: [serviceId], references: [id])
+  description      String
+  urgency          Urgency       @default(NORMAL)
+  preferredTime    DateTime?
+  status           RequestStatus @default(NEW)
+  assignedEmployeeId String?
+  assignedEmployee Employee?     @relation(fields: [assignedEmployeeId], references: [id])
+  createdAt        DateTime      @default(now())
+  updatedAt        DateTime      @updatedAt
+
+  invoice          Invoice?
+}
+
+// ============ EMPLOYEES ============
+
+model Employee {
+  id           String   @id @default(cuid())
+  userId       String?  @unique
+  user         User?    @relation(fields: [userId], references: [id])
+  name         String
+  phone        String
+  role         String // e.g. "تکنسین لوله بازکنی"
+  skills       String[]
+  areaId       String?
+  area         Area?    @relation(fields: [areaId], references: [id])
+  isActive     Boolean  @default(true)
+  createdAt    DateTime @default(now())
+
+  assignedJobs ServiceRequest[]
+}
+
+// ============ INVOICES ============
+
+enum PaymentStatus {
+  UNPAID
+  PARTIAL
+  PAID
+}
+
+model Invoice {
+  id               String        @id @default(cuid())
+  number           String        @unique // e.g. RG-140403-0001
+  customerId       String
+  customer         Customer      @relation(fields: [customerId], references: [id])
+  requestId        String?       @unique
+  request          ServiceRequest? @relation(fields: [requestId], references: [id])
+  laborCost        Int           @default(0)
+  materialsCost    Int           @default(0)
+  discount         Int           @default(0)
+  totalAmount      Int           @default(0)
+  paidAmount       Int           @default(0)
+  remainingAmount  Int           @default(0)
+  paymentStatus    PaymentStatus @default(UNPAID)
+  warrantyDays     Int           @default(0)
+  notes            String?
+  qrToken          String        @unique @default(cuid())
+  issuedAt         DateTime      @default(now())
+  createdAt        DateTime      @default(now())
+  updatedAt        DateTime      @updatedAt
+
+  items            InvoiceItem[]
+  payments         Payment[]
+}
+
+model InvoiceItem {
+  id         String  @id @default(cuid())
+  invoiceId  String
+  invoice    Invoice @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+  serviceId  String?
+  service    Service? @relation(fields: [serviceId], references: [id])
+  title      String
+  quantity   Int     @default(1)
+  unitPrice  Int
+  total      Int
+}
+
+model Payment {
+  id         String   @id @default(cuid())
+  invoiceId  String
+  invoice    Invoice  @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+  amount     Int
+  method     String // cash, card, online
+  paidAt     DateTime @default(now())
+  reference  String?
+}
+
+// ============ CONTENT ============
+
+model GalleryItem {
+  id        String   @id @default(cuid())
+  title     String
+  beforeImg String?
+  afterImg  String?
+  image     String?
+  serviceId String?
+  createdAt DateTime @default(now())
+}
+
+model BlogPost {
+  id          String   @id @default(cuid())
+  slug        String   @unique
+  title       String
+  excerpt     String
+  content     String
+  coverImage  String?
+  category    String
+  tags        String[]
+  seoTitle    String?
+  seoDesc     String?
+  published   Boolean  @default(true)
+  publishedAt DateTime @default(now())
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+model Faq {
+  id        String   @id @default(cuid())
+  question  String
+  answer    String
+  category  String   @default("general")
+  order     Int      @default(0)
+}
+
+model Review {
+  id        String   @id @default(cuid())
+  name      String
+  rating    Int
+  comment   String
+  serviceId String?
+  approved  Boolean  @default(false)
+  createdAt DateTime @default(now())
+}
+
+model Settings {
+  id             String @id @default("singleton")
+  companyName    String @default("ره گشا")
+  phoneMain      String @default("")
+  phoneEmergency String @default("")
+  whatsapp       String @default("")
+  address        String @default("")
+  workingHours   String @default("۲۴ ساعته - همه روزه")
+  mapLat         Float?
+  mapLng         Float?
+  socialInstagram String?
+  updatedAt      DateTime @updatedAt
+}
+
+model AuditLog {
+  id        String   @id @default(cuid())
+  userId    String?
+  user      User?    @relation(fields: [userId], references: [id])
+  action    String
+  entity    String
+  entityId  String?
+  meta      Json?
+  createdAt DateTime @default(now())
+}

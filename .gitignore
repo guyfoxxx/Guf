@@ -1,0 +1,10 @@
+node_modules
+.next
+out
+.env
+*.log
+npm-debug.log*
+
+# Admin-uploaded gallery photos — persisted on the server outside of deploys,
+# never something to commit to the repo.
+/uploads

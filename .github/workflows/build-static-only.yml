@@ -1,0 +1,89 @@
+name: Build Static Frontend (artifact only, no deploy)
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install dependencies
+        run: npm install
+
+      # مستقل از تنظیمات فعلی next.config.ts روی ریپو: همیشه حالت
+      # استاتیک export را در همین runner موقت اجبار می‌کنیم، چون
+      # admin/api به دیتابیس و session نیاز دارند و در export مجاز نیستند.
+      - name: Disable admin & api routes for this build
+        run: |
+          rm -rf src/app/admin src/app/api
+          echo "remaining app dir:"
+          find src/app -maxdepth 1
+
+      - name: Force static export config
+        run: |
+          cat > next.config.ts << 'EOF'
+          import type { NextConfig } from "next";
+
+          const nextConfig: NextConfig = {
+            output: "export",
+            trailingSlash: true,
+            images: {
+              unoptimized: true,
+            },
+          };
+
+          export default nextConfig;
+          EOF
+
+      # route handlerهایی مثل sitemap.ts/robots.ts در حالت output:"export"
+      # باید صریحاً force-static باشند، وگرنه next build خطا می‌دهد.
+      - name: Patch route handlers for static export
+        run: |
+          for f in src/app/sitemap.ts src/app/robots.ts; do
+            if [ -f "$f" ] && ! grep -q 'export const dynamic' "$f"; then
+              echo '' >> "$f"
+              echo 'export const dynamic = "force-static";' >> "$f"
+              echo "patched: $f"
+            fi
+          done
+
+      - name: Build static export
+        run: npm run build
+
+      - name: Verify output
+        run: |
+          if [ ! -d "out" ]; then
+            echo "::error::پوشه out ساخته نشد."
+            ls -la
+            exit 1
+          fi
+          echo "تعداد فایل‌های ساخته‌شده:"
+          find out -type f | wc -l
+
+      - name: Create ZIP
+        run: |
+          cd out
+          zip -r ../rahgosha-static-frontend.zip .
+          cd ..
+          du -h rahgosha-static-frontend.zip
+
+      # فقط آپلود به‌عنوان Artifact — هیچ دیپلوی/آپلود خودکاری به هاست انجام نمی‌شود.
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: rahgosha-static-frontend
+          path: rahgosha-static-frontend.zip
+          if-no-files-found: error
+          retention-days: 14

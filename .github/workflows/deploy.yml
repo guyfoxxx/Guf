@@ -1,0 +1,79 @@
+name: Build and Deploy (رهگشا)
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch: {}
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Generate Prisma Client
+        run: npx prisma generate
+
+      # اگر دیتابیس‌تان از بیرون (از گیت‌هاب) قابل دسترسی است این مرحله جدول‌ها را
+      # به‌روز می‌کند. اگر دیتابیس فقط از خود سرور قابل دسترسی است، این استپ را
+      # کامنت کنید و migrate را دستی از طریق SSH روی سرور اجرا کنید.
+      - name: Run database migrations
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: npx prisma migrate deploy
+
+      - name: Build Next.js (standalone)
+        run: npm run build
+
+      - name: Assemble standalone deploy bundle
+        run: |
+          mkdir -p deploy
+          cp -r .next/standalone/. deploy/
+          mkdir -p deploy/.next
+          cp -r .next/static deploy/.next/static
+          cp -r public deploy/public
+          cp -r prisma deploy/prisma
+          cp ecosystem.config.cjs deploy/ecosystem.config.cjs
+          tar -czf deploy.tar.gz -C deploy .
+
+      - name: Upload bundle to server (SCP)
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          port: ${{ secrets.SSH_PORT }}
+          username: ${{ secrets.SSH_USER }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          source: "deploy.tar.gz"
+          target: "~/deploy-tmp"
+          strip_components: 0
+
+      - name: Extract bundle on server and restart app (PM2)
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          port: ${{ secrets.SSH_PORT }}
+          username: ${{ secrets.SSH_USER }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          script: |
+            set -e
+            APP_DIR="${{ secrets.APP_DIR }}"
+            mkdir -p "$APP_DIR"
+            tar -xzf ~/deploy-tmp/deploy.tar.gz -C "$APP_DIR"
+            rm -f ~/deploy-tmp/deploy.tar.gz
+            cd "$APP_DIR"
+            # .env روی سرور دست‌نخورده باقی می‌ماند و هیچ‌وقت از این ورک‌فلو رونویسی نمی‌شود
+            export PATH="$HOME/.nvm/versions/node/$(cat .nvmrc 2>/dev/null || echo v20)/bin:$PATH"
+            command -v pm2 >/dev/null 2>&1 || npm install -g pm2
+            pm2 startOrReload ecosystem.config.cjs --update-env
+            pm2 save
